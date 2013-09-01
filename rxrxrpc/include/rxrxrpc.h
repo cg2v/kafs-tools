@@ -6,6 +6,9 @@
  * License.  For details, see the LICENSE file in the top-level source
  * directory or online at http://www.openafs.org/dl/license10.html
  */
+#include <pthread.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 
 #define rx_ConnectionOf(call)           ((call)->conn)
 #define rx_PeerOf(conn)                 ((conn)->peer)
@@ -45,35 +48,36 @@ struct sockaddr_rxrpc {
 #define rx_Write(call, buf, nbytes) rx_WriteProc(call, buf, nbytes)
 #define rx_Write32(call, value) rx_WriteProc32(call, value)
 #define rx_PutConnection(conn) rx_DestroyConnection(conn)
-
 struct rx_connection {
   //    struct rx_connection *next; /*  on hash chain _or_ free list */
   //struct rx_peer *peer;
   int socket;
   struct sockaddr_rxrpc target;
-    afs_int32 error;            /* If this connection is in error, this is it */
-    struct rx_call *call[RX_MAXCALLS];
-    afs_uint32 callNumber[RX_MAXCALLS]; /* Current call numbers */
-    afs_uint32 lastBusy[RX_MAXCALLS]; /* timestamp of the last time we got an
-                                       * RX_PACKET_TYPE_BUSY packet for this
-                                       * call slot, or 0 if the slot is not busy */
-    int abortCount;             /* count of abort messages sent */
-    u_int16_t serviceId;          /* To stamp on requests (clients only) */
-    afs_uint32 refCount;        /* Reference count (rx_refcnt_mutex) */
-    u_int8_t flags;               /* Defined below - (conn_data_lock) */
-    u_int8_t type;                /* Type of connection, defined below */
-    u_int8_t securityIndex;       /* corresponds to the security class of the */
-    /* securityObject for this conn */
-    struct rx_securityClass *securityObject;    /* Security object for this connection */
-    void *securityData;         /* Private data for this conn's security class */
-    u_int16_t securityHeaderSize; /* Length of security module's packet header data */
-    u_int16_t securityMaxTrailerSize;     /* Length of security module's packet trailer data */
+  afs_int32 error;            /* If this connection is in error, this is it */
+  struct rx_call *call[RX_MAXCALLS];
+  afs_uint32 callNumber[RX_MAXCALLS]; /* Current call numbers */
+  afs_uint32 lastBusy[RX_MAXCALLS]; /* timestamp of the last time we got an
+				     * RX_PACKET_TYPE_BUSY packet for this
+				     * call slot, or 0 if the slot is not busy */
+  int abortCount;             /* count of abort messages sent */
+  u_int16_t serviceId;          /* To stamp on requests (clients only) */
+  afs_uint32 refCount;        /* Reference count (rx_refcnt_mutex) */
+  u_int8_t flags;               /* Defined below - (conn_data_lock) */
+  u_int8_t type;                /* Type of connection, defined below */
+  u_int8_t securityIndex;       /* corresponds to the security class of the */
+  /* securityObject for this conn */
+  struct rx_securityClass *securityObject;    /* Security object for this connection */
+  void *securityData;         /* Private data for this conn's security class */
+  u_int16_t securityHeaderSize; /* Length of security module's packet header data */
+  u_int16_t securityMaxTrailerSize;     /* Length of security module's packet trailer data */
   int makeCallWaiters;
-
-    int timeout;                /* Overall timeout per call (seconds) for this conn */
-    int lastSendTime;           /* Last send time for this connection */
-    int nSpecific;              /* number entries in specific data */
-    void **specific;            /* pointer to connection specific data */
+  pthread_mutex_t  conn_call_lock;
+  pthread_cond_t conn_call_cv;
+  pthread_mutex_t conn_data_lock;
+  int timeout;                /* Overall timeout per call (seconds) for this conn */
+  int lastSendTime;           /* Last send time for this connection */
+  int nSpecific;              /* number entries in specific data */
+  void **specific;            /* pointer to connection specific data */
 };
 
 

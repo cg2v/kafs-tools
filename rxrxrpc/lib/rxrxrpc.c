@@ -136,7 +136,10 @@ rx_NewConnection(afs_uint32 shost, u_int16_t sport, u_int16_t sservice,
   ret->target.transport.sin.sin_family = AF_INET;
   ret->target.transport.sin.sin_addr.s_addr=htonl(shost);
   ret->target.transport.sin.sin_port = htons(sport);
-  
+  pthread_mutex_init(&ret->conn_call_lock, NULL);
+  pthread_cond_init(&ret->conn_call_cv, NULL);
+  pthread_mutex_init(&ret->conn_data_lock, NULL);
+
   RXS_NewConnection(securityObject, ret);
   return ret;
 }
@@ -158,6 +161,9 @@ static void rxi_CleanupConnection(struct rx_connection *conn)
     }
     conn->specific = NULL;
     conn->nSpecific = 0;
+  pthread_mutex_destroy(&conn->conn_data_lock);
+  pthread_cond_destroy(&conn->conn_call_cv);
+  pthread_mutex_destroy(&conn->conn_call_lock);
 }
 
 
@@ -166,19 +172,23 @@ void
 rx_DestroyConnection(struct rx_connection *conn)
 {
   int i;
+  pthread_mutex_lock(&conn->conn_call_lock);
   if ((conn->type == RX_CLIENT_CONNECTION)
       && (conn->flags & 
 	  (RX_CONN_MAKECALL_WAITING|RX_CONN_MAKECALL_ACTIVE))) {
     conn->flags |= RX_CONN_DESTROY_ME;
+    pthread_mutex_unlock(&conn->conn_call_lock);
     return;
   }
   for (i = 0; i < RX_MAXCALLS; i++) {
     struct rx_call *call = conn->call[i];
     if (call) {
+      pthread_mutex_unlock(&conn->conn_call_lock);
       conn->flags |= RX_CONN_DESTROY_ME;
       return;
     }
-   }
+  }
+  pthread_mutex_unlock(&conn->conn_call_lock);
   rxi_CleanupConnection(conn);
 }
 
@@ -188,11 +198,11 @@ rx_NewCall(struct rx_connection *conn)
 {
   int wait;
   struct rx_call *call;
+  pthread_mutex_lock(&conn->conn_call_lock);
   while (conn->flags & RX_CONN_MAKECALL_ACTIVE) {
     conn->flags |= RX_CONN_MAKECALL_WAITING;
     conn->makeCallWaiters++;
-    abort();
-    /* sleep! */
+    pthread_cond_wait(&conn->conn_call_cv, &conn->conn_call_lock);
     conn->makeCallWaiters--;
     if (conn->makeCallWaiters == 0)
       conn->flags &= ~RX_CONN_MAKECALL_WAITING;
@@ -224,8 +234,7 @@ rx_NewCall(struct rx_connection *conn)
       continue;
     conn->flags |= RX_CONN_MAKECALL_WAITING;
     conn->makeCallWaiters++;
-    abort();
-    /*sleep!*/
+    pthread_cond_wait(&conn->conn_call_cv, &conn->conn_call_lock);
     conn->makeCallWaiters--;
     if (conn->makeCallWaiters == 0)
       conn->flags &= ~RX_CONN_MAKECALL_WAITING;
@@ -236,7 +245,8 @@ rx_NewCall(struct rx_connection *conn)
   else
     call->mode = RX_MODE_SENDING;
   conn->flags &= ~RX_CONN_MAKECALL_ACTIVE;
-  /*wakeup */
+  pthread_cond_signal(&conn->conn_call_cv);
+  pthread_mutex_unlock(&conn->conn_call_lock);
   return call;
 }
 

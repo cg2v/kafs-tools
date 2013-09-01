@@ -39,7 +39,7 @@ ifeq ($(findstring gcc, $(CC)),)
 CFLAGS+= -I/usr/local/include
 LDFLAGS+= -L/usr/local/lib
 else
-CFLAGS+=-Wall -Wno-format -Wno-unused
+CFLAGS+=-pthread -Wall -Wno-format -Wno-unused
 endif
 
 #CC=purify gcc
