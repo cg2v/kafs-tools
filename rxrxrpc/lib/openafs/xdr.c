@@ -29,10 +29,8 @@
 
 #include <afsconfig.h>
 #include <afs/param.h>
-
-#ifndef KERNEL
-# include <roken.h>
-#endif
+#include <stdio.h>
+#include <string.h>
 
 
 /*
@@ -47,14 +45,7 @@
 
 #ifndef	NeXT
 
-#if defined(KERNEL) && !defined(UKERNEL)
-#include <sys/param.h>
-#ifndef AFS_LINUX20_ENV
-#include <sys/systm.h>
-#endif
-#endif
-#include "xdr.h"
-#include "rx.h"
+#include <rx/xdr.h>
 
 /*
  * constants specific to the xdr "protocol"

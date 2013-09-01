@@ -16,6 +16,12 @@
 #else
 # include <afs/errors.h>
 # include <rx/xdr.h>
+# include <errno.h>
+# include <stdlib.h>
+# include <string.h>
+# ifdef HAVE_UNISTD_H
+# include <unistd.h>
+# endif
 # ifdef AFS_NT40_ENV
 #  ifndef EDQUOT
 #   define EDQUOT WSAEDQUOT

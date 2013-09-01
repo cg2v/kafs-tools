@@ -46,18 +46,7 @@
  * arrays.  See xdr.h for more info on the interface to xdr.
  */
 
-#if defined(KERNEL) && !defined(UKERNEL)
-
-#include <sys/param.h>
-#ifdef AFS_LINUX20_ENV
-#include "h/string.h"
-#else
-#include <sys/systm.h>
-#endif
-#else
-#include <roken.h>
-#endif
-#include "xdr.h"
+#include <rx/xdr.h>
 
 #define LASTUNSIGNED	((u_int)0-1)
 

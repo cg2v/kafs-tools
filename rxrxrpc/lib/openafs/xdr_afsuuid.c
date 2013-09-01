@@ -14,16 +14,7 @@
 #include <afsconfig.h>
 #include <afs/param.h>
 
-#if defined(KERNEL) && !defined(UKERNEL)
-#ifdef AFS_LINUX20_ENV
-#include "h/string.h"
-#else
-#include <sys/param.h>
-#include <sys/systm.h>
-#endif
-#include <roken.h>
-#endif
-#include "xdr.h"
+#include <rx/xdr.h>
 
 int
 xdr_afsUUID(XDR * xdrs, afsUUID * objp)

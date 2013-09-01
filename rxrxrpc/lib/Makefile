@@ -11,10 +11,9 @@ endif
 
 
 OPENAFS_OBJS=openafs/rx_misc.o openafs/rx_null.o openafs/xdr_afsuuid.o \
- openafs/xdr_array.o openafs/xdr_arrayn.o openafs/xdr.o openafs/xdr_float.o \
+ openafs/xdr_array.o openafs/xdr_arrayn.o openafs/xdr.o \
  openafs/xdr_int32.o openafs/xdr_int64.o openafs/xdr_len.o openafs/xdr_mem.o \
- openafs/xdr_rec.o openafs/xdr_refernce.o openafs/xdr_rx.o openafs/xdr_stdio.o \
- openafs/xdr_update.o
+ openafs/xdr_refernce.o openafs/xdr_rx.o openafs/xdr_update.o
 
 OBJS=rxrxrpc.o
 

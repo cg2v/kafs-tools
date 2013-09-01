@@ -33,12 +33,7 @@
 
 #ifndef	NeXT
 
-#if defined(KERNEL) && !defined(UKERNEL)
-#include <sys/param.h>
-#else
-#include <roken.h>
-#endif
-#include "xdr.h"
+#include <rx/xdr.h>
 
 /*
  * XDR afs_int32 integers

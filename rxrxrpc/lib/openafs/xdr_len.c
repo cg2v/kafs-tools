@@ -25,13 +25,7 @@
 #include <afsconfig.h>
 #include <afs/param.h>
 
-#ifdef KERNEL
-# include "afs/sysincludes.h"
-#else
-# include <roken.h>
-#endif
-
-#include "xdr.h"
+#include <rx/xdr.h>
 
 static void
 xdrlen_destroy(XDR *xdrs)
@@ -80,7 +74,7 @@ xdrlen_setpos(XDR *xdrs, u_int pos)
 static afs_int32 *
 xdrlen_inline(XDR *xdrs, u_int len)
 {
-    return NULL;
+    return 0;
 }
 
 static struct xdr_ops xdrlen_ops = {

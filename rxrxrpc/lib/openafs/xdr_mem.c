@@ -40,14 +40,9 @@
  *
  */
 
-#ifdef KERNEL
-# include "afs/sysincludes.h"
-#else
-# include <roken.h>
-# include <limits.h>
-#endif
-
-#include "xdr.h"
+#include <limits.h>
+#include <string.h>
+#include <rx/xdr.h>
 
 static bool_t xdrmem_getint32(XDR *, afs_int32 *);
 static bool_t xdrmem_putint32(XDR *, afs_int32 *);

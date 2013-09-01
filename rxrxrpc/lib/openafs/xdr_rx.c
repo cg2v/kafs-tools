@@ -14,30 +14,8 @@
 #include <afsconfig.h>
 #include <afs/param.h>
 
-#ifdef KERNEL
-# include "afs/sysincludes.h"
-# ifndef UKERNEL
-#  include "h/types.h"
-#  include "h/uio.h"
-#  ifdef AFS_LINUX20_ENV
-#   include "h/socket.h"
-#  else
-#   include "rpc/types.h"
-#  endif
-#  ifdef AFS_LINUX22_ENV
-#   ifndef quad_t
-#    define quad_t __quad_t
-#    define u_quad_t __u_quad_t
-#   endif
-#  endif
-#  include "netinet/in.h"
-# endif /* !UKERNEL */
-#else /* KERNEL */
-# include <roken.h>
-#endif /* KERNEL */
-
-#include "rx.h"
-#include "xdr.h"
+#include <rxrxrpc.h>
+#include <rx/xdr.h>
 
 /* Static prototypes */
 static bool_t xdrrx_getint32(XDR *axdrs, afs_int32 * lp);

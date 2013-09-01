@@ -29,9 +29,9 @@
 #include <afsconfig.h>
 #include <afs/param.h>
 
-#include <roken.h>
-
-#include "rx.h"
+#include <rxrxrpc.h>
+#include <stdio.h>
+#include <string.h>
 
 
 #ifndef	NeXT
@@ -45,7 +45,7 @@
  * "pointers".  See xdr.h for more info on the interface to xdr.
  */
 
-#include "xdr.h"
+#include <rx/xdr.h>
 #define LASTUNSIGNED	((u_int)0-1)
 
 /*

@@ -10,16 +10,6 @@
 #include <afsconfig.h>
 #include <afs/param.h>
 
-#ifdef KERNEL
-# ifndef UKERNEL
-#  include "h/types.h"
-# else /* !UKERNEL */
-#  include "afs/sysincludes.h"
-# endif /* !UKERNEL */
-#else /* KERNEL */
-# include <roken.h>
-#endif /* KERNEL */
-
 #include "rxrxrpc.h"
 
 /* The null security object.  No authentication, no nothing. */

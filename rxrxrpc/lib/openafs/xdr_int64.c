@@ -7,17 +7,7 @@
 #include <afs/param.h>
 
 
-#if defined(KERNEL) && !defined(UKERNEL)
-#ifdef AFS_LINUX20_ENV
-#include "h/string.h"
-#else
-#include <sys/param.h>
-#include <sys/systm.h>
-#endif
-#else
-#include <roken.h>
-#endif
-#include "xdr.h"
+#include <rx/xdr.h>
 
 /*
  * XDR afs_int64 integers

@@ -28,14 +28,11 @@
  */
 #include <afsconfig.h>
 #include <afs/param.h>
+#include <stdio.h>
+#include <string.h>
 
 #ifndef	NeXT
 
-#ifndef KERNEL
-# include <roken.h>
-#endif
-
-#include "rx.h"
 
 /*
  * xdr_array.c, Generic XDR routines impelmentation.
@@ -46,18 +43,7 @@
  * arrays.  See xdr.h for more info on the interface to xdr.
  */
 
-#if defined(KERNEL) && !defined(UKERNEL)
-
-#include <sys/param.h>
-#ifdef AFS_LINUX20_ENV
-#include "h/string.h"
-#else
-#ifndef AFS_DARWIN90_ENV
-#include <sys/systm.h>
-#endif
-#endif /* AFS_LINUX20_ENV */
-#endif
-#include "xdr.h"
+#include <rx/xdr.h>
 
 #define LASTUNSIGNED	((u_int)0-1)
 

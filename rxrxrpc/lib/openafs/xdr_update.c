@@ -11,7 +11,7 @@
 
 
 #ifndef	NeXT
-#include "xdr.h"
+#include <rx/xdr.h>
 
 #ifdef NULL			/* Strict ANSI-C aborts if we redefine this */
 #undef NULL
