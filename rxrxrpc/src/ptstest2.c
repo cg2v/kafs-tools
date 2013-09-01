@@ -13,11 +13,12 @@
 #include <errno.h>
 #include <netdb.h>
 
+#include <afs/stds.h>
+#include <rxrxrpc.h>
 #include <afs/ptserver.h>
 #include <afs/cellconfig.h>
 #include <afs/ptint.h>
 #include <rx/xdr.h>
-#include "rxrxrpc.h"
 
 int PR_NameToID(register struct rx_connection *z_conn,namelist * nlist,idlist * ilist)
 {
