@@ -343,7 +343,7 @@ rxi_SendData(struct rx_call *call, int last) {
 
   code=sendmsg(call->conn->socket, &mh, last?0:MSG_MORE);
   if (code < 0)
-    call->error=code;
+    call->error=errno;
   return code > 0 ? 0 : code;
 }
 
