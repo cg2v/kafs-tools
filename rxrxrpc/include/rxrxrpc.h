@@ -95,12 +95,18 @@ struct rx_connection {
 #define RX_CLIENT_CONNECTION    0
 #define RX_SERVER_CONNECTION    1
 
+struct rx_pkt {
+    struct rx_queue qh;
+    size_t datalen;
+    char data[16384];
+};
+
 struct rx_call {
-  void *kernel_id;
+    void *kernel_id;
     u_int16_t nLeft;              /* Number bytes left in first receive packet */
     u_int16_t nFree;              /* Number bytes free in last send packet */
-  int pktinuse;
-    char currentPacket[2048];    /* Current packet being assembled or being read */
+    int pktinuse;
+    struct rx_pkt *currentPacket;    /* Current packet being assembled or being read */
     char *curpos;               /* current position in curvec */
     u_int8_t channel;             /* Index of call, within connection */
     u_int8_t state;               /* Current call state as defined below */
@@ -115,6 +121,9 @@ struct rx_call {
     afs_uint32 rnext;           /* Next sequence number expected to be read by rx_ReadData */
     int abortCode;              /* error code from last RPC */
     int abortCount;             /* number of times last error was sent */
+    struct rx_queue rq;
+    pthread_mutex_t lock;
+    pthread_cond_t cv_rq;
 };
 
 /* Call modes:  the modes of a call in RX_STATE_ACTIVE state (process attached) */

@@ -17,7 +17,9 @@
 #include <ctype.h>
 #include <time.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
+#include <sys/poll.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <afs/stds.h>
@@ -82,10 +84,137 @@ static int rx_Inited;
 static int rx_socket=-1;
 static int rx_port=-1;
 
+static int epollfd;
+
+/* write here to wakeup listener to detect changes in the listenfds array */
+static int wakeup_listener_fd;
+
+static pthread_mutext_t rx_InitLock=PTHREAD_MUTEX_INITIALIZER;
+
+
+static void *rx_Listener(void *a) {
+    struct rx_pkt *pktbuf=NULL;
+    
+    for (;;) {
+	struct sockaddr_storage ss;
+	char controlbuf[256];
+	struct epoll_events ev[10];
+	int i;
+	struct msghdr mh;
+	struct iovec iov[1];
+	int code;
+	int ctrls;
+	struct cmsghdr *cmsg;
+	struct rx_call *call;
+	ssize_t datalen;
+	
+	count=epoll_wait(epollfd, &ev, 10, -1);
+	if (count < 0) {
+	    usleep(1000);
+	    continue;
+	}
+	for (i=0; i<count;i++) {
+	    if (!pktbuf)
+		pktbuf=calloc(1, sizeof(struct rx_pkt));
+	    if (!pktbuf) {
+		usleep(1000);
+		continue;
+	    }
+	    iov[0].iov_base=&pktbuf->data;
+	    iov[0].iov_len=16384;
+	    mh.msg_name    = &ss;
+	    mh.msg_namelen = sizeof(ss);
+	    mh.msg_iov     = iov;
+	    mh.msg_iovlen  = 1;
+	    mh.msg_control = controlbuf;
+	    mh.msg_controllen = sizeof(controlbuf);
+	    mh.msg_flags   = 0;
+	    
+	    datalen=recvmsg(ev[i].data.fd, &mh, 0);
+	    if (datalen == -1) {
+		usleep(1000);
+		continue;
+	    }
+	    if (mh.msg_flags & (MSG_TRUNC|MSG_CTRUNC|MSG_OOB|MSG_ERRQUEUE))
+		abort();
+	    call=NULL;
+	    ctrls=0;
+	    for (cmsg = CMSG_FIRSTHDR(&mh); cmsg; cmsg = CMSG_NXTHDR(&mh, cmsg)) {
+		int n = cmsg->cmsg_len - CMSG_ALIGN(sizeof(*cmsg));
+		void *p = CMSG_DATA(cmsg);
+		if (cmsg->cmsg_level == SOL_RXRPC) {
+		    switch(cmsg->cmsg_type) {
+		    case RXRPC_USER_CALL_ID:
+			unsigned long call_id;
+			if (ctrls & 1) /* multiple CALL_ID */
+			    goto next_pkt;
+			if (n != sizeof(long))
+			    goto next_pkg;
+			memcpy(&callid, p, n);
+			call=rxi_FindCall(callid, (struct sockaddr *)&ss);
+			if (!call)
+			    goto next_pkt;
+			ctrls|=1;
+			break;
+		    case RXRPC_ABORT:
+		    case RXRPC_NET_ERROR:
+		    case RXRPC_LOCAL_ERROR:
+			if (n != sizeof(afs_int32))
+			    goto next_pkt;
+			if (!call)
+			    goto next_pkt;
+			assert(0==pthread_mutex_lock(&call->lock));
+			memcpy(&call->error, p, sizeof(afs_int32));
+			call->mode=RX_MODE_ERROR;
+			if (call->flags & RX_CALL_READER_WAIT)
+			    assert(0==pthread_cond_signal(&call->cv_rq));
+			assert(0==pthread_mutex_unlock(&call->lock));
+			goto next_pkt;
+		    case RXRPC_BUSY:
+			if (!call)
+			    goto next_pkt;
+			assert(0==pthread_mutex_lock(&call->lock));
+			call->error=RX_CALL_BUSY;
+			call->mode=RX_MODE_ERROR;
+			if (call->flags & RX_CALL_READER_WAIT)
+			    assert(0==pthread_cond_signal(&call->cv_rq));
+			assert(0==pthread_mutex_unlock(&call->lock));
+			goto next_pkt;
+		    case RXRPC_ACK:
+		    case RXRPC_NEW_CALL:
+			/* servers not supported here */
+			abort();
+		    }
+		}
+	    }
+	    if (call) {
+		assert(0==pthread_mutex_lock(&call->lock));
+		pktbuf->datalen=datalen;
+		queue_Append(&call->rq, pktbuf);
+		pktbuf=NULL;
+		if (call->flags & RX_CALL_READER_WAIT)
+		    assert(0==pthread_cond_signal(&call->cv_rq));
+		if (mh.msg_flags & MSG_EOR) 
+		    call->flags |= RX_CALL_RECEIVE_DONE;
+		assert(0==pthread_mutex_unlock(&call->lock));
+	    }
+	next_pkt:
+	}
+	
+    }
+    
+}
+
+
 int rx_Init(unsigned int port) {
   struct sockaddr_rxrpc srx;
-  if (rx_Inited)
+  if (pthread_mutex_lock(&rx_InitLock))
     return -1;
+  if (rx_Inited) {
+    pthread_mutex_unlock(&rx_InitLock);
+    return -1;
+  }
+  pthread_mutex_unlock(&rx_InitLock);
   rx_port=port;
   rx_socket=socket(AF_RXRPC, SOCK_DGRAM, PF_INET);
   if (rx_socket <0)
@@ -253,82 +382,33 @@ rx_NewCall(struct rx_connection *conn)
 
 static int
 rxi_GetNextPacket(struct rx_call *call) {
-  char controlbuf[256];
-  struct msghdr mh;
-  struct iovec iov[1];
-  int code;
-  int ctrls;
-  struct cmsghdr *cmsg;
-  iov[0].iov_base=call->currentPacket;
-  iov[0].iov_len=sizeof(call->currentPacket);
-
-  if (call->error || call->mode != RX_MODE_RECEIVING)
-    return -1;
-  mh.msg_name    = NULL;
-  mh.msg_namelen = 0;
-  mh.msg_iov     = iov;
-  mh.msg_iovlen  = 1;
-  mh.msg_control = controlbuf;
-  mh.msg_controllen = sizeof(controlbuf);
-  mh.msg_flags   = 0;
-
-  code=recvmsg(call->conn->socket, &mh, 0);
-  if (code < 0) {
-    call->error=errno;
-    call->mode=RX_MODE_ERROR;
-    return -1;
-  }
-  if (mh.msg_flags & (MSG_TRUNC|MSG_CTRUNC|MSG_OOB|MSG_ERRQUEUE)) {
-    printf("Unexpected return flags %d\n", mh.msg_flags);
-    abort();
-  }
-  
-  ctrls=0;
-  for (cmsg = CMSG_FIRSTHDR(&mh); cmsg; cmsg = CMSG_NXTHDR(&mh, cmsg)) {
-    int n = cmsg->cmsg_len - CMSG_ALIGN(sizeof(*cmsg));
-    void *p = CMSG_DATA(cmsg);
-    if (cmsg->cmsg_level == SOL_RXRPC) {
-      if (cmsg->cmsg_type == RXRPC_USER_CALL_ID) {
-	if (ctrls & 1) {
-	  printf("multiple call ids!\n");
-	  abort();
-	}
-	if (n != sizeof(long))
-	  continue;
-	if (memcmp(p, &call->kernel_id, sizeof(long))) {
-	  printf("Mismatched reply packet!\n");
-	  abort();
-	}
-	ctrls|=1;
-      } else if (cmsg->cmsg_type == RXRPC_ABORT) {
-	if (n != sizeof(afs_int32))
-	  continue;
-	memcpy(&call->error, p, sizeof(afs_int32));
-	call->mode=RX_MODE_ERROR;
-      } else if (cmsg->cmsg_type == RXRPC_NET_ERROR) {
-	if (n != sizeof(afs_int32))
-	  continue;
-	memcpy(&call->error, p, sizeof(afs_int32));
-	call->mode=RX_MODE_ERROR;
-      } else if (cmsg->cmsg_type == RXRPC_LOCAL_ERROR) {
-	if (n != sizeof(afs_int32))
-	  continue;
-	memcpy(&call->error, p, sizeof(afs_int32));
-	call->mode=RX_MODE_ERROR;
-      }
+    int code;
+    
+    assert(0==pthread_mutex_lock(&call->lock));
+    if (call->error || call->mode != RX_MODE_RECEIVING) {
+	assert(0==pthread_mutex_unlock(&call->lock));
+	return -1;
     }
-  }
-  if ((ctrls &1) == 0) {
-    printf("Missing call id on reply\n");
-    abort();
-  }
-  if (call->mode == RX_MODE_ERROR)
-    return call->error;
-  call->curpos=call->currentPacket;
-  call->nLeft = code;
-  if (mh.msg_flags & MSG_EOR)
-    call->flags=RX_CALL_RECEIVE_DONE;
-  return 0;
+    
+    if (call->currentPacket) {
+	free(call->currentPacket);
+	call->currentPacket=NULL;
+    }
+    while (queue_IsEmpty(&call->rq)) {
+	call->flags |= RX_CALL_READER_WAIT;
+	assert(0==pthread_cond_wait(&call->cv_rq, &call->lock));
+	call->flags &= ~RX_CALL_READER_WAIT;
+	if (call->mode == RX_MODE_ERROR) {
+	    assert(0==pthread_mutex_unlock(&call->lock));
+	    return -1;
+	}
+    }
+    call->currentPacket=queue_First(&call_rq, struct rx_pkt);
+    queue_Remove(call->currentPacket);
+    call->curpos=call->currentPacket.data;
+    call->nLeft = call->currentPacket.datalen;
+    assert(0==pthread_mutex_unlock(&call->lock));
+    return 0;
 }
 
 static int
