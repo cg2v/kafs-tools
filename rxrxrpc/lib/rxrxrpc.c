@@ -182,6 +182,7 @@ static void *rx_Listener(void *a) {
 			goto next_pkt;
 		    case RXRPC_ACK:
 		    case RXRPC_NEW_CALL:
+		    case RXRPC_RESPONSE:
 			/* servers not supported here */
 			abort();
 		    }
@@ -192,6 +193,12 @@ static void *rx_Listener(void *a) {
 		pktbuf->datalen=datalen;
 		queue_Append(&call->rq, pktbuf);
 		pktbuf=NULL;
+#if 0 /* too cute */
+		if (!call->pktinuse && !call->nLeft && call->currentPacket) {
+		    pktbuf=call->currentPacket;
+		    call->currentPacket=NULL;
+		}
+#endif
 		if (call->flags & RX_CALL_READER_WAIT)
 		    assert(0==pthread_cond_signal(&call->cv_rq));
 		if (mh.msg_flags & MSG_EOR) 
@@ -290,9 +297,9 @@ static void rxi_CleanupConnection(struct rx_connection *conn)
     }
     conn->specific = NULL;
     conn->nSpecific = 0;
-  pthread_mutex_destroy(&conn->conn_data_lock);
-  pthread_cond_destroy(&conn->conn_call_cv);
-  pthread_mutex_destroy(&conn->conn_call_lock);
+    pthread_mutex_destroy(&conn->conn_data_lock);
+    pthread_cond_destroy(&conn->conn_call_cv);
+    pthread_mutex_destroy(&conn->conn_call_lock);
 }
 
 
@@ -353,6 +360,9 @@ rx_NewCall(struct rx_connection *conn)
 	 * the call number is valid from the last time this channel was used */
 	if (*call->callNumber == 0)
 	  *call->callNumber = 1;
+	queue_Init(&call->rq);
+	assert(0==pthread_mutex_init(&call->lock, NULL));
+	assert(0==pthread_cond_init(&call->cv_rq, NULL));
 	break;
       }
     }
@@ -384,7 +394,6 @@ static int
 rxi_GetNextPacket(struct rx_call *call) {
     int code;
     
-    assert(0==pthread_mutex_lock(&call->lock));
     if (call->error || call->mode != RX_MODE_RECEIVING) {
 	assert(0==pthread_mutex_unlock(&call->lock));
 	return -1;
@@ -418,8 +427,8 @@ rxi_SendData(struct rx_call *call, int last) {
   struct msghdr mh;
   struct iovec iov[1];
   int code;
-  iov[0].iov_base=call->currentPacket;
-  iov[0].iov_len=sizeof(call->currentPacket)-call->nFree;
+  iov[0].iov_base=call->currentPacket.data;
+  iov[0].iov_len=call->currentPacket.datalen-call->nFree;
 
   RXRPC_ADD_CALLID(controlbuf, controllen, ((unsigned long)call->kernel_id));
 
@@ -463,70 +472,73 @@ int
 rxi_ReadProc(struct rx_call *call, char *buf,
              int nbytes)
 {
-  int code;
-  int requestCount=nbytes;
-  do {
-    if (call->nLeft == 0) {
-      /* Get next packet */
-      for (;;) {
-	if (call->error || (call->mode != RX_MODE_RECEIVING)) {
-	  if (call->error) {
-	    call->mode = RX_MODE_ERROR;
-	    return 0;
-	  }
-	  if (call->mode == RX_MODE_SENDING) {
-	    rxi_FlushWrite(call);
-	    continue;
-	  }
+    int code;
+    int requestCount=nbytes;
+    do {
+	if (call->nLeft == 0) {
+	    /* Get next packet */
+	    for (;;) {
+		if (call->mode == RX_MODE_SENDING) {
+		    rxi_FlushWrite(call);
+		    continue;
+		}
+		if (call->error || (call->mode != RX_MODE_RECEIVING)) {
+		    call->mode = RX_MODE_ERROR;
+		    if (!call->error)
+			call->error=RX_PROTOCOL_ERROR;
+		    return 0;
+		}
+		code = rxi_GetNextPacket(call);
+		if (code)
+		    return 0;
+		if (call->nLeft)
+		    break;
+		if (call->flags & RX_CALL_RECEIVE_DONE)
+		    return requestCount - nbytes;
+		abort();
+	    }
 	}
-	code = rxi_GetNextPacket(call);
-	if (code)
-	  return 0;
-	if (call->nLeft)
-	  break;
-	if (call->flags & RX_CALL_RECEIVE_DONE)
-	  return requestCount - nbytes;
-	call->flags |= RX_CALL_READER_WAIT;
-	while (call->flags & RX_CALL_READER_WAIT) {
-	  abort();
-	  /*sleep*/
+	while (nbytes && call->nLeft) {
+	    unsigned int t = MIN((int)call->nLeft, nbytes);
+	    memcpy(buf, call->curpos, t);
+	    buf += t;
+	    nbytes -= t;
+	    call->curpos += t;
+	    call->nLeft -= t;
 	}
-      }
-    }
-    while (nbytes && call->nLeft) {
-      unsigned int t = MIN((int)call->nLeft, nbytes);
-      memcpy(buf, call->curpos, t);
-      buf += t;
-      nbytes -= t;
-      call->curpos += t;
-      call->nLeft -= t;
-    }
-  } while (nbytes);
-  
-  return requestCount;
+    } while (nbytes);
+
+    return requestCount;
 }
 
 int
 rx_ReadProc(struct rx_call *call, char *buf, int nbytes) {
-  return rxi_ReadProc(call, buf, nbytes);
+    int ret;
+    assert(0==pthread_mutex_lock(&call->lock));
+    ret= rxi_ReadProc(call, buf, nbytes);
+    assert(0==pthread_mutex_unlock(&call->lock));
+    return ret
 }
 
 
 int
 rx_ReadProc32(struct rx_call *call, afs_int32 * value)
 {
+    int ret;
     /*
      * Most common case, all of the data is in the current iovec.
      * We are relying on nLeft being zero unless the call is in receive mode.
      */
-  if (!call->error && call->nLeft >= sizeof(afs_int32)) {
-    memcpy((char *)value, call->curpos, sizeof(afs_int32));
-    call->curpos += sizeof(afs_int32);
-    call->nLeft  -= sizeof(afs_int32);
-    return sizeof(afs_int32);
-  }
-  
-  return rxi_ReadProc(call, (char *)value, sizeof(afs_int32));
+    if (!call->error && call->nLeft >= sizeof(afs_int32)) {
+	memcpy((char *)value, call->curpos, sizeof(afs_int32));
+	call->curpos += sizeof(afs_int32);
+	call->nLeft  -= sizeof(afs_int32);
+	return sizeof(afs_int32);
+    }
+    assert(0==pthread_mutex_lock(&call->lock));
+    ret = rxi_ReadProc(call, (char *)value, sizeof(afs_int32));
+    assert(0==pthread_mutex_unlock(&call->lock));
+    return ret;
 }
 
 
@@ -537,6 +549,7 @@ rxi_WriteProc(struct rx_call *call, char *buf,
     struct rx_connection *conn = call->conn;
     int requestCount = nbytes;
     int code;
+
     if (call->mode != RX_MODE_SENDING) {
       if ((conn->type == RX_SERVER_CONNECTION)
 	  && (call->mode == RX_MODE_RECEIVING)) {
@@ -544,7 +557,7 @@ rxi_WriteProc(struct rx_call *call, char *buf,
 	call->nFree=0;
 	call->pktinuse=0;
       } else {
-	return 0;
+	  return 0;
       }
     }
 
@@ -583,20 +596,28 @@ rxi_WriteProc(struct rx_call *call, char *buf,
 
 int
 rx_WriteProc(struct rx_call *call, char *buf, int nbytes) {
-  return rxi_WriteProc(call, buf, nbytes);
+    int ret;
+    assert(0==pthread_mutex_lock(&call->lock));
+    ret=rxi_WriteProc(call, buf, nbytes);
+    assert(0==pthread_mutex_lock(&call->lock));
+    return ret;
 }
 
 /* Optimization for marshalling 32 bit arguments */
 int
 rx_WriteProc32(struct rx_call *call, afs_int32 * value)
 {
+    int ret;
     if (!call->error && call->nFree >= sizeof(afs_int32)) {
       memcpy(call->curpos, (char *)value, sizeof(afs_int32));
       call->curpos += sizeof(afs_int32);
       call->nFree  -= sizeof(afs_int32);
       return sizeof(afs_int32);
     }
-    return rxi_WriteProc(call, (char *)value, sizeof(afs_int32));
+    assert(0==pthread_mutex_lock(&call->lock));
+    ret=rxi_WriteProc(call, (char *)value, sizeof(afs_int32));
+    assert(0==pthread_mutex_lock(&call->lock));
+    return ret;
 }
 
 void
@@ -616,7 +637,9 @@ rxi_FlushWrite(struct rx_call *call)
 void
 rx_FlushWrite(struct rx_call *call)
 {
+    assert(0==pthread_mutex_lock(&call->lock));
     rxi_FlushWrite(call);
+    assert(0==pthread_mutex_unlock(&call->lock));
 }
 
 afs_int32
@@ -624,6 +647,9 @@ rx_EndCall(struct rx_call *call, afs_int32 rc)
 {
     struct rx_connection *conn = call->conn;
     afs_int32 error;
+
+    assert(0==pthread_mutex_lock(&conn->conn_call_lock));
+    assert(0==pthread_mutex_lock(&call->lock));
     if (rc == 0 && call->error == 0) {
         call->abortCode = 0;
         call->abortCount = 0;
@@ -633,7 +659,6 @@ rx_EndCall(struct rx_call *call, afs_int32 rc)
       call->mode = RX_MODE_ERROR;
       rxi_SendCallAbort(call);
     }
-
     if (conn->type == RX_SERVER_CONNECTION) {
       /* Make sure reply or at least dummy reply is sent */
       if (call->mode == RX_MODE_RECEIVING) {
@@ -651,15 +676,23 @@ rx_EndCall(struct rx_call *call, afs_int32 rc)
     }
     conn->call[call->channel]=NULL;
     error = call->error;
-
+    while (!queue_IsEmpty(&call->rq)) {
+	struct rx_pkt *pkt=queue_First(&call_rq, rx_pkt);
+	queue_Remove(pkt);
+	free(pkt);
+    }
+    assert(0==pthread_mutex_unlock(&call->lock));
+    assert(0==pthread_mutex_destroy(&call_lock));
+    assert(0==pthread_cond_destroy(&call->cv_rq));
     free(call);
     conn->flags |= RX_CONN_BUSY;
     if (conn->flags & RX_CONN_MAKECALL_WAITING) {
-      /* wakeup */
+	pthread_cond_signal(&conn->conn_call_cv);
     }
     if (conn->type == RX_CLIENT_CONNECTION) {
       conn->flags &= ~RX_CONN_BUSY;
     }
+    assert(0==pthread_mutex_lock(&conn->conn_call_lock);
     error = ntoh_syserr_conv(error);
     return error;
 }
