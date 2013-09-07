@@ -214,40 +214,44 @@ static void *rx_Listener(void *a) {
 
 
 int rx_Init(unsigned int port) {
-  struct sockaddr_rxrpc srx;
-  if (pthread_mutex_lock(&rx_InitLock))
-    return -1;
-  if (rx_Inited) {
-    pthread_mutex_unlock(&rx_InitLock);
-    return -1;
-  }
-  pthread_mutex_unlock(&rx_InitLock);
-  rx_port=port;
-  rx_socket=socket(AF_RXRPC, SOCK_DGRAM, PF_INET);
-  if (rx_socket <0)
-    return -1;
-  /* bind an address to the local endpoint */
-  srx.srx_family = AF_RXRPC;
-  srx.srx_service = 0; /* it's a client */
-  srx.transport_type = SOCK_DGRAM;
-  srx.transport_len = sizeof(srx.transport.sin);
-  srx.transport.sin.sin_family = AF_INET;
-  srx.transport.sin.sin_addr.s_addr=htonl(INADDR_ANY);
-  srx.transport.sin.sin_port = htons(rx_port);
-  
-  if (bind(rx_socket, (struct sockaddr *) &srx, sizeof(srx)) < 0) {
-    return -1;
-  }
+    struct sockaddr_rxrpc srx;
+    if (pthread_mutex_lock(&rx_InitLock))
+	return -1;
+    if (rx_Inited) {
+	pthread_mutex_unlock(&rx_InitLock);
+	return -1;
+    }
+    rx_port=port;
+    rx_socket=socket(AF_RXRPC, SOCK_DGRAM, PF_INET);
+    if (rx_socket <0) {
+	pthread_mutex_unlock(&rx_InitLock);
+	return -1;
+    }
+    /* bind an address to the local endpoint */
+    srx.srx_family = AF_RXRPC;
+    srx.srx_service = 0; /* it's a client */
+    srx.transport_type = SOCK_DGRAM;
+    srx.transport_len = sizeof(srx.transport.sin);
+    srx.transport.sin.sin_family = AF_INET;
+    srx.transport.sin.sin_addr.s_addr=htonl(INADDR_ANY);
+    srx.transport.sin.sin_port = htons(rx_port);
+    
+    if (bind(rx_socket, (struct sockaddr *) &srx, sizeof(srx)) < 0) {
+	pthread_mutex_unlock(&rx_InitLock);
+	return -1;
+    }
 #if 0 /* does not work */
-  if (rx_port == 0) {
-    socklen_t srxs=sizeof(srx);
-    if (0 == getsockname(rx_socket, (struct sockaddr *) &srx, &srxs))
-      rx_port=ntohs(srx.transport.sin.sin_port);
-  }
+    if (rx_port == 0) {
+	socklen_t srxs=sizeof(srx);
+	if (0 == getsockname(rx_socket, (struct sockaddr *) &srx, &srxs))
+	    rx_port=ntohs(srx.transport.sin.sin_port);
+    }
 #endif
-  rx_Inited=1;
-  return 0;
+    rx_Inited=1;
+    pthread_mutex_unlock(&rx_InitLock);
+    return 0;
 }
+
 
 
 struct rx_connection *
