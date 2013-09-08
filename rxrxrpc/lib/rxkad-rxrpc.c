@@ -42,11 +42,11 @@ struct rxrpc_key_sec2_v1 {
 };
 
 struct rxkad_cprivate {
-  int socket;
+  struct rx_fd *socket;
 };
 int rxkad_Close(struct rx_securityClass *aobj) {
   struct rxkad_cprivate *tcp = (struct rxkad_cprivate *)aobj->privateData;
-  close(tcp->socket);
+  rxi_PutSocket(tcp->socket);
   free(tcp);
   return 0;
 }
@@ -54,11 +54,13 @@ int rxkad_Close(struct rx_securityClass *aobj) {
 int rxkad_NewConnection(struct rx_securityClass *aobj,
 			struct rx_connection *aconn) {
   struct rxkad_cprivate *tcp = (struct rxkad_cprivate *)aobj->privateData;
-  aconn->socket=tcp->socket;
+  rxi_PutSocket(aconn->socket);
+  aconn->socket=rxi_GetSocket(tcp->socket);
   return 0;
 }
 int rxkad_DestroyConnection(struct rx_securityClass *aobj,
 			    struct rx_connection *aconn) {
+  rxi_PutSocket(aconn->socket);
   return 0;
 }
 
@@ -90,42 +92,28 @@ rxkad_InitClientSecurityObject(struct rx_securityClass *aobj,
 {
   struct rxkad_cprivate *tcp = (struct rxkad_cprivate *)aobj->privateData;
   int ilevel=level;
-  struct sockaddr_rxrpc srx;
   
-  tcp->socket=socket(AF_RXRPC, SOCK_DGRAM, PF_INET);
-  if (tcp->socket < 0) {
+  tcp->socket=rxi_AllocClientSocket();
+  if (!tcp->socket) {
    free(tcp);
    free(aobj);
    return NULL;
   }
-  srx.srx_family = AF_RXRPC;
-  srx.srx_service = 0; /* it's a client */
-  srx.transport_type = SOCK_DGRAM;
-  srx.transport_len = sizeof(srx.transport.sin);
-  srx.transport.sin.sin_family = AF_INET;
-  srx.transport.sin.sin_addr.s_addr=htonl(INADDR_ANY);
-  srx.transport.sin.sin_port = htons(0); /* maybe export rx_port? */
   
-  if (setsockopt(tcp->socket, SOL_RXRPC, RXRPC_SECURITY_KEY, keydesc,
+  if (setsockopt(tcp->socket->fd, SOL_RXRPC, RXRPC_SECURITY_KEY, keydesc,
 		 strlen(keydesc)) < 0) {
-    close(tcp->socket);
+    rxi_PutSocket(tcp->socket);
     free(tcp);
     free(aobj);
     return NULL;
   }
-  if (setsockopt(tcp->socket, SOL_RXRPC, RXRPC_MIN_SECURITY_LEVEL, &ilevel,
+  if (setsockopt(tcp->socket->fd, SOL_RXRPC, RXRPC_MIN_SECURITY_LEVEL, &ilevel,
 		 sizeof(ilevel)) < 0) {
-    close(tcp->socket);
+    rxi_PutSocket(tcp->socket);
     free(tcp);
     free(aobj);
     return NULL;
   } 
-  if (bind(tcp->socket, (struct sockaddr *) &srx, sizeof(srx)) < 0) {
-    close(tcp->socket);
-    free(tcp);
-    free(aobj);
-    return NULL;
-  }
   return aobj;
 }
 struct rx_securityClass *

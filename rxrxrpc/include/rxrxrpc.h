@@ -9,11 +9,9 @@
 #include <pthread.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <rx/rx_queue.h>
 
 #define rx_ConnectionOf(call)           ((call)->conn)
-#define rx_PeerOf(conn)                 ((conn)->peer)
-#define rx_HostOf(peer)                 ((peer)->host)
-#define rx_PortOf(peer)                 ((peer)->port)
 #define rx_SetLocalStatus(call, status) ((call)->localStatus = (status))
 #define rx_GetLocalStatus(call, status) ((call)->localStatus)
 #define rx_GetRemoteStatus(call)        ((call)->remoteStatus)
@@ -43,15 +41,17 @@ struct sockaddr_rxrpc {
         } transport;
 };
 
+struct rx_fd {
+   int fd;
+   int refcnt;
+};
 #define rx_Read(call, buf, nbytes)   rx_ReadProc(call, buf, nbytes)
 #define rx_Read32(call, value)   rx_ReadProc32(call, value)
 #define rx_Write(call, buf, nbytes) rx_WriteProc(call, buf, nbytes)
 #define rx_Write32(call, value) rx_WriteProc32(call, value)
 #define rx_PutConnection(conn) rx_DestroyConnection(conn)
 struct rx_connection {
-  //    struct rx_connection *next; /*  on hash chain _or_ free list */
-  //struct rx_peer *peer;
-  int socket;
+  struct rx_fd *socket;
   struct sockaddr_rxrpc target;
   afs_int32 error;            /* If this connection is in error, this is it */
   struct rx_call *call[RX_MAXCALLS];
@@ -102,6 +102,7 @@ struct rx_pkt {
 };
 
 struct rx_call {
+    struct rx_queue qh;
     void *kernel_id;
     u_int16_t nLeft;              /* Number bytes left in first receive packet */
     u_int16_t nFree;              /* Number bytes free in last send packet */
@@ -122,6 +123,7 @@ struct rx_call {
     int abortCode;              /* error code from last RPC */
     int abortCount;             /* number of times last error was sent */
     struct rx_queue rq;
+    pthread_t owner;
     pthread_mutex_t lock;
     pthread_cond_t cv_rq;
 };
@@ -153,6 +155,63 @@ struct rx_call {
 #define RX_CALL_PEER_BUSY       0x20000 /* the last packet we received on this call was a
                                          * BUSY packet; i.e. the channel for this call is busy */
 #define RX_CALL_ACKALL_SENT     0x40000 /* ACKALL has been sent on the call */
+
+/*
+ * RX error codes.  RX uses error codes from -1 to -64 and -100.
+ * Rxgen uses other error codes < -64 (see src/rxgen/rpc_errors.h);
+ * user programs are expected to return positive error codes
+ */
+
+/* Something bad happened to the connection; temporary loss of communication */
+#define RX_CALL_DEAD                (-1)
+
+/*
+ * An invalid operation, such as a client attempting to send data
+ * after having received the beginning of a reply from the server.
+ */
+#define RX_INVALID_OPERATION        (-2)
+
+/* An optional timeout per call may be specified */
+#define RX_CALL_TIMEOUT             (-3)
+
+/* End of data on a read.  Not currently in use. */
+#define RX_EOF                      (-4)
+
+/* Some sort of low-level protocol error. */
+#define RX_PROTOCOL_ERROR           (-5)
+/*
+ * Generic user abort code; used when no more specific error code needs to be
+ * communicated.  For example, multi rx clients use this code to abort a multi-
+ * rx call.
+ */
+#define RX_USER_ABORT               (-6)
+
+/* Port already in use (from rx_Init).  This error is never sent on the wire. */
+#define RX_ADDRINUSE                (-7)
+
+/* EMSGSIZE returned from network.  Packet too big, must fragment */
+#define RX_MSGSIZE                  (-8)
+
+/*
+ * Idle dead timeout error.  This error is never sent on the wire.
+ * rxi_SendCallAbort() translates RX_CALL_IDLE to RX_CALL_TIMEOUT.
+ */
+#define RX_CALL_IDLE                (-9)
+
+/*
+ * Busy call channel error.  This error is never sent on the wire.
+ * rxi_SendCallAbort() translates RX_CALL_BUSY to RX_CALL_TIMEOUT.
+ */
+#define RX_CALL_BUSY                (-10)
+
+/*
+ * Busy call channel error.  This error is never sent on the wire.
+ * rxi_SendCallAbort() translates RX_CALL_BUSY to RX_CALL_TIMEOUT.
+ */
+/* transient failure detected ( possibly the server is restarting ) */
+/* this should be equal to VRESTARTING ( util/errors.h ) for old clients to work */
+#define RX_RESTARTING               (-100)
+
 
 
 struct rx_securityClass {
@@ -187,3 +246,7 @@ extern void rx_DestroyConnection(struct rx_connection *conn);
 extern struct rx_call *rx_NewCall(struct rx_connection *conn);
 extern afs_int32 rx_EndCall(struct rx_call *call, afs_int32 rc);
 extern int rxs_Release(struct rx_securityClass *aobj);
+
+extern struct rx_fd *rxi_AllocClientSocket(void);
+extern struct rx_fd *rxi_GetSocket(struct rx_fd *);
+extern void rxi_PutSocket(struct rx_fd *);
