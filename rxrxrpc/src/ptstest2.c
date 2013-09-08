@@ -155,6 +155,7 @@ int main(int argc, char **argv) {
   afs_uint32 host;
   if (argc < 3) {
     fprintf(stderr, "Usage: ptstest server nameorid\n");
+    exit(1);
   }
   server=argv[1];
   user=argv[2];
@@ -197,6 +198,7 @@ int main(int argc, char **argv) {
     code=PR_IDToName(c, &il, &nl);
     if (code) {
       fprintf(stderr, "IDToName failed: %d\n", code);
+  rx_DestroyConnection(c);
       exit(1);
     }
     user=strdup(nl.namelist_val[0]);
@@ -211,6 +213,7 @@ int main(int argc, char **argv) {
     code=PR_NameToID(c, &nl, &il);
     if (code) {
       fprintf(stderr, "NameToID failed: %d\n", code);
+  rx_DestroyConnection(c);
       exit(1);
     }
     id=il.idlist_val[0];
@@ -222,6 +225,7 @@ int main(int argc, char **argv) {
   code=PR_ListEntry(c, id, &pr);
   if (code) {
     fprintf(stderr, "ListEntry failed: %d\n", code);
+  rx_DestroyConnection(c);
     exit(1);
   }
   printf("Meta: %d %d %d %d %d %d %d %s\n", pr.id, pr.flags, pr.owner, pr.creator, pr.ngroups, pr.nusers, pr.count, pr.name);
@@ -231,6 +235,7 @@ int main(int argc, char **argv) {
   code=PR_ListElements(c, id, &pl, &over);
   if (code) {
     fprintf(stderr, "ListElements failed: %d\n", code);
+  rx_DestroyConnection(c);
     exit(1);
   }
   il.idlist_len=pl.prlist_len;
@@ -239,6 +244,7 @@ int main(int argc, char **argv) {
   code=PR_IDToName(c, &il, &nl);
   if (code) {
     fprintf(stderr, "IDToName(2) failed: %d\n", code);
+  rx_DestroyConnection(c);
     exit(1);
   }
   printf("Members:\n");

@@ -1,4 +1,4 @@
-all: ptstest2
+all: ptstest2 ptstest-thread
 
 
 clean::
@@ -9,7 +9,7 @@ ifeq ($(AFSDIR),)
 $(error AFSDIR not set and could not be derived)
 endif
 
-
+UNAME=`uname`
 ifeq ($(origin CC),default)
 ifneq ($(findstring Linux, $(UN)),)
 CC=gcc
@@ -40,11 +40,15 @@ CFLAGS+= -I/usr/local/include
 LDFLAGS+= -L/usr/local/lib
 else
 CFLAGS+=-pthread -Wall -Wno-format -Wno-unused
+LDFLAGS+=-pthread
 endif
 
 #CC=purify gcc
 
-ptstest2: ptstest2.o 
-	$(CC) -o $@ ptstest2.o ../lib/librxrxrpc.a -L$(AFSDIR)/lib/afs -lprot -lubik ../lib/librxrxrpc.a
+ptstest2: ptstest2.o  ../lib/librxrxrpc.a
+	$(CC) $(LDFLAGS) -o $@ ptstest2.o ../lib/librxrxrpc.a -L$(AFSDIR)/lib/afs -lprot -lubik ../lib/librxrxrpc.a
 ptstest2.o: ../include/rxrxrpc.h
 
+ptstest-thread: ptstest-thread.o  ../lib/librxrxrpc.a
+	$(CC) $(LDFLAGS) -o $@ ptstest-thread.o ../lib/librxrxrpc.a -L$(AFSDIR)/lib/afs -lprot -lubik ../lib/librxrxrpc.a
+ptstest-thread.o: ../include/rxrxrpc.h
